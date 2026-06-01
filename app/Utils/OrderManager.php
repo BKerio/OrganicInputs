@@ -39,6 +39,7 @@ use App\Models\ReferralCustomer;
 use App\Models\WalletTransaction;
 use Illuminate\Support\Facades\DB;
 use App\Models\DigitalProductVariation;
+use App\Services\OrderConfirmationEmailService;
 use App\Services\SmsService;
 use Modules\TaxModule\app\Traits\VatTaxManagement;
 
@@ -1351,7 +1352,7 @@ class OrderManager
             }
         }
 
-        self::sendOrderConfirmationSms(
+        self::sendOrderConfirmationNotifications(
             orderIds: $orderPlacedIds,
             addressId: $data['address_id'] ?? session('address_id'),
             customerInfo: $getCustomerInfo,
@@ -1369,36 +1370,46 @@ class OrderManager
         return $orderPlacedIds;
     }
 
-    public static function sendOrderConfirmationSms(
+    public static function sendOrderConfirmationNotifications(
         array $orderIds,
         $addressId = null,
         array $customerInfo = [],
         string $paymentMethod = '',
     ): void {
-        if (empty($orderIds) || !config('sms.enabled')) {
+        if (empty($orderIds)) {
             return;
         }
 
-        $context = self::buildOrderConfirmationSmsContext(
+        $context = self::buildOrderConfirmationContext(
             orderIds: $orderIds,
             addressId: $addressId,
             customerInfo: $customerInfo,
             paymentMethod: $paymentMethod,
         );
 
-        if (empty($context['phone'])) {
-            return;
+        if (config('sms.enabled') && !empty($context['phone'])) {
+            app(SmsService::class)->sendSms(
+                $context['phone'],
+                self::formatOrderConfirmationMessage($context)
+            );
         }
 
-        $message = config('sms.order_message');
+        if (!empty($context['recipient_email'])) {
+            app(OrderConfirmationEmailService::class)->send($context, $context['recipient_email']);
+        }
+    }
+
+    public static function formatOrderConfirmationMessage(array $context, ?string $template = null): string
+    {
+        $message = $template ?? config('sms.order_message');
         foreach ($context as $key => $value) {
             $message = str_replace(':' . $key, (string) $value, $message);
         }
 
-        app(SmsService::class)->sendSms($context['phone'], $message);
+        return $message;
     }
 
-    private static function buildOrderConfirmationSmsContext(
+    private static function buildOrderConfirmationContext(
         array $orderIds,
         $addressId = null,
         array $customerInfo = [],
@@ -1429,8 +1440,8 @@ class OrderManager
             ?: ($address?->phone ?? '')
             ?: ($registeredCustomer?->phone ?? '');
 
-        $email = $address?->email
-            ?: ($registeredCustomer?->email ?? '');
+        $email = trim($address?->email ?? '')
+            ?: trim($registeredCustomer?->email ?? '');
 
         $deliveryAddress = trim(implode(', ', array_filter([
             $address?->address,
@@ -1456,6 +1467,7 @@ class OrderManager
             'first_name' => $firstName,
             'phone' => $phone,
             'email' => $email ?: translate('not_available'),
+            'recipient_email' => $email,
             'address' => $deliveryAddress ?: translate('not_available'),
             'city' => $address?->city ?? translate('not_available'),
             'country' => $address?->country ?? translate('not_available'),

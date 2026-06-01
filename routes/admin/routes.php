@@ -182,6 +182,9 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'middleware' => ['admin', '
         Route::controller(POSOrderController::class)->group(function () {
             Route::post('order-details/{id}', 'index')->name('order-details');
             Route::post('order-place', 'placeOrder')->name('place-order');
+            Route::post('mpesa/stk-push', 'mpesaStkPush')->name('mpesa.stk-push');
+            Route::get('mpesa/status', 'mpesaStatus')->name('mpesa.status');
+            Route::post('mpesa/complete-order', 'mpesaCompleteOrder')->name('mpesa.complete-order');
             Route::any('cancel-order', 'cancelOrder')->name('cancel-order');
             Route::any('view-hold-orders', 'getAllHoldOrdersView')->name('view-hold-orders');
         });

@@ -187,6 +187,7 @@
 @include('admin-views.pos.partials.modals._add-coupon-discount')
 @include('admin-views.pos.partials.modals._add-discount')
 @include('admin-views.pos.partials.modals._short-cut-keys')
+@include('admin-views.pos.partials.modals._mpesa-pending-modal')
 
 @include('admin-views.pos.partials.offcanvas._filter-offcanvas')
 @include('admin-views.pos.partials.offcanvas._add-new-customer-offcanvas')
@@ -207,6 +208,24 @@
 <span id="route-admin-pos-update-quantity" data-url="{{ route('admin.pos.update-quantity') }}"></span>
 <span id="route-admin-pos-get-variant-price" data-url="{{ route('admin.pos.get-variant-price') }}"></span>
 <span id="route-admin-pos-change-cart-editable" data-url="{{ route('admin.pos.change-cart').'/?cart_id=:value' }}"></span>
+<span id="route-admin-pos-mpesa-stk-push" data-url="{{ route('admin.pos.mpesa.stk-push') }}"
+      data-pending-text="{{ translate('an_mpesa_prompt_has_been_sent_enter_your_pin_to_complete_payment') }}"></span>
+<span id="route-admin-pos-mpesa-status" data-url="{{ route('admin.pos.mpesa.status') }}"></span>
+<span id="route-admin-pos-mpesa-complete-order" data-url="{{ route('admin.pos.mpesa.complete-order') }}"></span>
+<span id="pos-mpesa-labels" class="d-none"
+      data-check-phone="{{ translate('check_your_phone') }}"
+      data-pending="{{ translate('an_mpesa_prompt_has_been_sent_enter_your_pin_to_complete_payment') }}"
+      data-do-not-close="{{ translate('do_not_close_this_page_until_payment_is_confirmed') }}"
+      data-success="{{ translate('mpesa_payment_successful') }}"
+      data-completing-order="{{ translate('order_placed_successfully') }}"
+      data-cancelled="{{ translate('mpesa_payment_cancelled') }}"
+      data-wrong-pin="{{ translate('mpesa_wrong_pin') }}"
+      data-insufficient-funds="{{ translate('mpesa_insufficient_funds') }}"
+      data-timeout="{{ translate('mpesa_payment_timeout') }}"
+      data-expired="{{ translate('mpesa_payment_expired') }}"
+      data-system-error="{{ translate('mpesa_system_error') }}"
+      data-failure="{{ translate('mpesa_payment_failed') }}"
+      data-payment-failed="{{ translate('payment_failed') }}"></span>
 
 <span id="message-cart-word" data-text="{{ translate('cart') }}"></span>
 <span id="message-stock-out" data-text="{{ translate('stock_out') }}"></span>

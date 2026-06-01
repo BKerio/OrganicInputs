@@ -12,10 +12,14 @@ use App\Contracts\Repositories\VendorRepositoryInterface;
 use App\Enums\SessionKey;
 use App\Events\DigitalProductDownloadEvent;
 use App\Http\Controllers\BaseController;
+use App\Services\AdminPosMpesaService;
 use App\Services\CartService;
+use App\Services\MpesaService;
+use App\Services\MpesaStkResult;
 use App\Services\OrderDetailsService;
 use App\Services\OrderService;
 use App\Services\POSService;
+use Illuminate\Support\Facades\Cache;
 use App\Traits\CalculatorTrait;
 use App\Traits\CustomerTrait;
 use App\Utils\CartManager;
@@ -93,25 +97,180 @@ class POSOrderController extends BaseController
      */
     public function placeOrder(Request $request): JsonResponse
     {
-        $amount = $request['amount'];
-        $paidAmount = $request['type'] == 'cash' ? ($request['paid_amount'] ?? 0) : null;
-        $cartId = session(SessionKey::CURRENT_USER);
-        $condition = $this->POSService->checkConditions(amount: $amount, paidAmount: $paidAmount);
-        if ($condition == 'true') {
-            return response()->json();
+        if ($request['type'] === 'mpesa') {
+            return response()->json([
+                'status' => 0,
+                'message' => translate('please_complete_mpesa_payment_first'),
+            ]);
         }
+
+        return $this->finalizePosOrder($request);
+    }
+
+    public function mpesaStkPush(Request $request): JsonResponse
+    {
+        $mpesaService = app(MpesaService::class);
+        if (!$mpesaService->isConfigured()) {
+            return response()->json([
+                'status' => 0,
+                'message' => translate('mpesa_is_not_configured_set_mpesa_variables_in_env'),
+            ]);
+        }
+
+        $amount = (float) $request['amount'];
+        if ($this->POSService->checkConditions(amount: $amount, paidAmount: null)) {
+            return response()->json(['status' => 0]);
+        }
+
+        $phone = preg_replace('/\D/', '', (string) $request['mpesa_phone']);
+        if (strlen($phone) < 9) {
+            return response()->json([
+                'status' => 0,
+                'message' => translate('please_update_your_phone_number'),
+            ]);
+        }
+
+        $cartId = session(SessionKey::CURRENT_USER);
+        $userId = $this->cartService->getUserId();
+        if ($userId == 0 && $this->cartService->checkProductTypeDigital(cartId: $cartId)) {
+            return response()->json([
+                'status' => 0,
+                'checkProductTypeForWalkingCustomer' => true,
+                'message' => translate('To_order_digital_product') . ',' . translate('_kindly_fill_up_the_“Add_New_Customer”_form') . '.',
+            ]);
+        }
+
+        $reference = 'POS-' . substr((string) now()->timestamp, -8);
+        $stkResponse = $mpesaService->stkPush($phone, $amount, $reference);
+
+        if (($stkResponse['ResponseCode'] ?? '') !== '0') {
+            return response()->json([
+                'status' => 0,
+                'message' => $stkResponse['errorMessage']
+                    ?? $stkResponse['ResponseDescription']
+                    ?? translate('Something_went_wrong'),
+            ]);
+        }
+
+        $checkoutRequestId = $stkResponse['CheckoutRequestID'] ?? null;
+        if (!$checkoutRequestId) {
+            return response()->json([
+                'status' => 0,
+                'message' => translate('Something_went_wrong'),
+            ]);
+        }
+
+        AdminPosMpesaService::putPending($checkoutRequestId, [
+            'amount' => $amount,
+            'cart_id' => $cartId,
+            'paid' => false,
+            'mpesa_phone' => $phone,
+        ]);
+
+        return response()->json([
+            'status' => 1,
+            'checkout_request_id' => $checkoutRequestId,
+            'message' => translate('an_mpesa_prompt_has_been_sent_enter_your_pin_to_complete_payment'),
+        ]);
+    }
+
+    public function mpesaStatus(Request $request): JsonResponse
+    {
+        $checkoutRequestId = $request['checkout_request_id'];
+        if (!$checkoutRequestId) {
+            return response()->json(['status' => 'not_found', 'is_final' => true], 404);
+        }
+
+        $pending = AdminPosMpesaService::getPending($checkoutRequestId);
+
+        if (!$pending) {
+            return response()->json(['status' => 'not_found', 'is_final' => true], 404);
+        }
+
+        $cachedResult = AdminPosMpesaService::resolveStatusPayload($pending);
+        if ($cachedResult !== null) {
+            return response()->json($cachedResult);
+        }
+
+        $queryResponse = app(MpesaService::class)->stkPushQuery($checkoutRequestId);
+        $resultCode = (int) ($queryResponse['ResultCode'] ?? -1);
+
+        if (array_key_exists('ResultCode', $queryResponse) && MpesaStkResult::isFinal($resultCode)) {
+            AdminPosMpesaService::applyStkCallback(
+                checkoutRequestId: $checkoutRequestId,
+                resultCode: $resultCode,
+                resultDesc: $queryResponse['ResultDesc'] ?? null,
+                callbackPayload: $queryResponse,
+            );
+
+            $pending = AdminPosMpesaService::getPending($checkoutRequestId);
+            $cachedResult = AdminPosMpesaService::resolveStatusPayload($pending ?? []);
+
+            if ($cachedResult !== null) {
+                return response()->json($cachedResult);
+            }
+        }
+
+        return response()->json([
+            'status' => MpesaStkResult::STATUS_PENDING,
+            'result_code' => null,
+            'message' => translate('an_mpesa_prompt_has_been_sent_enter_your_pin_to_complete_payment'),
+            'is_final' => false,
+            'is_success' => false,
+        ]);
+    }
+
+    public function mpesaCompleteOrder(Request $request): JsonResponse
+    {
+        $checkoutRequestId = $request['checkout_request_id'];
+        $pending = AdminPosMpesaService::getPending($checkoutRequestId);
+
+        if (!$pending || empty($pending['paid'])) {
+            return response()->json([
+                'status' => 0,
+                'message' => translate('mpesa_payment_failed'),
+            ]);
+        }
+
+        $orderRequest = new Request([
+            'amount' => $pending['amount'],
+            'type' => 'mpesa',
+            'paid_amount' => $pending['amount'],
+        ]);
+
+        Cache::forget(AdminPosMpesaService::cacheKey($checkoutRequestId));
+
+        return $this->finalizePosOrder($orderRequest);
+    }
+
+    protected function finalizePosOrder(Request $request): JsonResponse
+    {
+        $amount = $request['amount'];
+        $paymentType = $request['type'];
+        $paidAmount = $paymentType === 'cash' ? ($request['paid_amount'] ?? 0) : $amount;
+        $cartId = session(SessionKey::CURRENT_USER);
+        $condition = $this->POSService->checkConditions(amount: $amount, paidAmount: $paymentType === 'cash' ? $paidAmount : null);
+        if ($condition) {
+            return response()->json(['status' => 0]);
+        }
+
         $userId = $this->cartService->getUserId();
         $checkProductTypeDigital = $this->cartService->checkProductTypeDigital(cartId: $cartId);
         if ($userId == 0 && $checkProductTypeDigital) {
-            return response()->json(['checkProductTypeForWalkingCustomer' => true, 'message' => translate('To_order_digital_product') . ',' . translate('_kindly_fill_up_the_“Add_New_Customer”_form') . '.']);
+            return response()->json([
+                'status' => 0,
+                'checkProductTypeForWalkingCustomer' => true,
+                'message' => translate('To_order_digital_product') . ',' . translate('_kindly_fill_up_the_“Add_New_Customer”_form') . '.',
+            ]);
         }
-        if ($request['type'] == 'wallet' && $userId != 0) {
+
+        if ($paymentType === 'wallet' && $userId != 0) {
             $customerBalance = $this->customerRepo->getFirstWhere(params: ['id' => $userId]) ?? 0;
             if ($customerBalance['wallet_balance'] >= currencyConverter(amount: $amount)) {
                 $this->createWalletTransaction(user_id: $userId, amount: floatval($amount), transaction_type: 'order_place', reference: 'order_place_in_pos');
             } else {
                 ToastMagic::error(translate('need_Sufficient_Amount_Balance'));
-                return response()->json();
+                return response()->json(['status' => 0]);
             }
         }
 
@@ -213,8 +372,8 @@ class POSOrderController extends BaseController
                 cart: $cart,
                 amount: $amount,
                 totalTaxAmount: $totalTaxAmount,
-                paidAmount: $request['type'] == 'cash' ? $paidAmount : $amount,
-                paymentType: $request['type'],
+                paidAmount: $paymentType === 'cash' ? $paidAmount : $amount,
+                paymentType: $paymentType,
                 addedBy: 'admin',
                 userId: $userId
             );
@@ -236,9 +395,11 @@ class POSOrderController extends BaseController
             session(['last_order' => $orderId]);
             $this->cartService->getNewCartId();
             ToastMagic::success(translate('order_placed_successfully'));
+
+            return response()->json(['status' => 1, 'order_id' => $orderId]);
         }
 
-        return response()->json();
+        return response()->json(['status' => 0]);
     }
 
     /**

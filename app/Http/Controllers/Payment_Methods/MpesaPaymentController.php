@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Payment_Methods;
 
 use App\Models\PaymentRequest;
 use App\Models\User;
+use App\Services\AdminPosMpesaService;
 use App\Services\MpesaService;
 use App\Services\MpesaStkResult;
 use App\Traits\Processor;
@@ -182,20 +183,26 @@ class MpesaPaymentController extends Controller
 
         $paymentData = $this->findPaymentByCheckoutId($checkoutRequestId);
 
-        if (!$paymentData) {
+        if ($paymentData) {
+            if (!$paymentData->is_paid) {
+                $this->processStkOutcome(
+                    paymentData: $paymentData,
+                    resultCode: $resultCode,
+                    resultDesc: $resultDesc,
+                    checkoutRequestId: $checkoutRequestId,
+                    source: 'callback',
+                    callbackPayload: $callback,
+                );
+            }
+        } elseif (AdminPosMpesaService::applyStkCallback(
+            checkoutRequestId: $checkoutRequestId,
+            resultCode: $resultCode,
+            resultDesc: $resultDesc,
+            callbackPayload: $callback,
+        )) {
+            // Admin POS STK session updated in cache for polling UI.
+        } else {
             Log::warning('M-Pesa callback: payment not found', ['checkout_request_id' => $checkoutRequestId]);
-            return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
-        }
-
-        if (!$paymentData->is_paid) {
-            $this->processStkOutcome(
-                paymentData: $paymentData,
-                resultCode: $resultCode,
-                resultDesc: $resultDesc,
-                checkoutRequestId: $checkoutRequestId,
-                source: 'callback',
-                callbackPayload: $callback,
-            );
         }
 
         return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);

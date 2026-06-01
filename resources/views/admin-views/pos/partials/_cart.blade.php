@@ -161,81 +161,47 @@ $isExpanded = $totalCartItemProduct > 0;
                    value="{{usdToDefaultCurrency(amount: $cartItems['total']+ ($cartItems['totalTax'] ?? 0) -$cartItems['couponDiscount'])}}"
                    readonly>
             <div class="p-3 bg-section rounded">
+                @php($mpesaConfigured = app(\App\Services\MpesaService::class)->isConfigured())
+                @php($defaultMpesaPhone = preg_replace('/\D/', '', $summaryData['currentCustomerData']->phone ?? ''))
+                @php($defaultMpesaPhone = str_starts_with($defaultMpesaPhone, '254') ? substr($defaultMpesaPhone, 3) : (str_starts_with($defaultMpesaPhone, '0') ? substr($defaultMpesaPhone, 1) : $defaultMpesaPhone))
                 <div>
                     <div class="text-dark fw-medium text-capitalize d-flex mb-3">{{ translate('paid_By') }}:</div>
-                    <ul class="list-unstyled option-buttons d-flex flex-wrap gap-2 align-items-center mb-0 p-0">
-                        <li>
-                            <input type="radio" class="paid-by-cash" id="cash" value="cash" name="type" hidden checked>
-                            <label for="cash"
-                                   class="btn text-dark border bg-white fw-normal btn-sm mb-0">{{ translate('cash') }}</label>
-                        </li>
-                        <li>
-                            <input type="radio" value="card" id="card" name="type" hidden>
-                            <label for="card"
-                                   class="btn text-dark border bg-white fw-normal btn-sm mb-0">{{ translate('card') }}</label>
-                        </li>
-                        @php( $walletStatus = getWebConfig('wallet_status') ?? 0)
-                        @if ($walletStatus)
-                            <li class="{{ (str_contains(session('current_user'), 'walk-in-customer')) ? 'd-none':'' }}">
-                                <input type="radio" value="wallet" id="wallet" name="type" hidden>
-                                <label for="wallet"
-                                       class="btn text-dark border bg-white fw-normal btn-sm mb-0">{{ translate('wallet') }}</label>
-                            </li>
-                        @endif
-                    </ul>
+                    <input type="radio" value="mpesa" id="mpesa" name="type" hidden checked>
+                    <label for="mpesa" class="btn btn-primary fw-normal btn-sm mb-3">
+                        {{ translate('M-Pesa') }} STK Push
+                    </label>
+                    @if(!$mpesaConfigured)
+                        <div class="alert alert-warning py-2 fs-12 mb-3">
+                            {{ translate('mpesa_is_not_configured_set_mpesa_variables_in_env') }}
+                        </div>
+                    @endif
                 </div>
-                <div class="cash-change-amount cash-change-section">
-                    <div class="d-flex gap-2 justify-content-between align-items-center pt-2">
-                        <dt class="text-capitalize fw-normal">{{ translate('Paid_Amount') }} :</dt>
-                        <dd class="text-dark">
-                            <input type="number"
-                                   class="form-control px-2 py-3 bg-white text-end pos-paid-amount-element remove-spin"
-                                   placeholder="{{ translate('ex') }}: 1000"
-                                   value="{{usdToDefaultCurrency(amount: $cartItems['total']+($cartItems['totalTax'] ?? 0)-$cartItems['couponDiscount'])}}"
-                                   name="paid_amount" {{ $totalCartItemProduct <= 0 ? 'disabled' : '' }}
-                                   min="{{ usdToDefaultCurrency(amount: ($cartItems['total'] + ($cartItems['totalTax'] ?? 0) - $cartItems['couponDiscount'])) }}"
-                                   data-currency-position="{{ getWebConfig('currency_symbol_position') }}"
-                                   data-currency-symbol="{{ getCurrencySymbol() }}">
-                        </dd>
+                <div class="pos-mpesa-section">
+                    <label class="form-label text-capitalize fw-normal mb-2" for="pos_mpesa_phone">
+                        {{ translate('mpesa_phone_number') }} <span class="text-danger">*</span>
+                    </label>
+                    <div class="pos-mpesa-phone-wrap">
+                        <div class="input-group pos-mpesa-phone-group">
+                            <span class="input-group-text pos-mpesa-dial-code" aria-hidden="true">
+                                <span class="pos-mpesa-flag">🇰🇪</span>
+                                <span class="fw-semibold">+254</span>
+                            </span>
+                            <input type="text"
+                                   inputmode="numeric"
+                                   autocomplete="tel"
+                                   class="form-control pos-mpesa-phone-input"
+                                   id="pos_mpesa_phone"
+                                   placeholder="712345678"
+                                   value="{{ $defaultMpesaPhone }}"
+                                   maxlength="10"
+                                   data-intl-initialized="true"
+                                   {{ $totalCartItemProduct <= 0 ? 'disabled' : '' }}>
+                        </div>
                     </div>
-                    <div class="d-flex gap-2 justify-content-between align-items-center pt-3">
-                        <dt class="text-capitalize fw-normal">{{ translate('Change_Amount') }} :</dt>
-                        <dd class="font-weight-bold title-color pos-change-amount-element">{{ setCurrencySymbol(amount: 0) }}</dd>
-                    </div>
+                    <small class="text-muted d-block mt-2 fs-12">
+                        {{ translate('you_will_receive_mpesa_prompt_on_this_number') }}
+                    </small>
                 </div>
-                <div class="cash-change-card cash-change-section d-none">
-                    <div class="d-flex gap-2 justify-content-between align-items-center pt-2">
-                        <dt class="text-capitalize fw-normal">{{ translate('Paid_Amount') }} :</dt>
-                        <dd class="text-dark">
-                            <input type="number" class="form-control px-2 py-3 bg-white text-end"
-                                   placeholder="{{ translate('ex') }}: 1000"
-                                   value="{{usdToDefaultCurrency(amount: $cartItems['total']+($cartItems['totalTax'] ?? 0)-$cartItems['couponDiscount'])}}"
-                                   disabled>
-                        </dd>
-                    </div>
-                    <div class="d-flex gap-2 justify-content-between align-items-center pt-3">
-                        <dt class="text-capitalize fw-normal">{{ translate('Change_Amount') }} :</dt>
-                        <dd class="font-weight-bold title-color">{{ setCurrencySymbol(amount: 0) }}</dd>
-                    </div>
-                </div>
-                <div class="cash-change-wallet cash-change-section d-none">
-                    <div class="d-flex gap-2 justify-content-between align-items-center pt-2">
-                        <dt class="text-capitalize fw-normal">{{ translate('Paid_Amount') }} : <span
-                                class="badge badge-soft-danger" id="message-insufficient-balance"
-                                data-text="{{ translate('insufficient_balance') }}"></span></dt>
-                        <dd class="text-dark">
-                            <input type="number" class="form-control px-2 py-3 bg-white text-end wallet-balance-input"
-                                   placeholder="{{ translate('ex') }}: 1000"
-                                   value="{{usdToDefaultCurrency(amount: $cartItems['total']+($cartItems['totalTax'] ?? 0)-$cartItems['couponDiscount'])}}"
-                                   disabled>
-                        </dd>
-                    </div>
-                    <div class="d-flex gap-2 justify-content-between align-items-center pt-3">
-                        <dt class="text-capitalize fw-normal">{{ translate('Change_Amount') }} :</dt>
-                        <dd class="font-weight-bold title-color">{{ setCurrencySymbol(amount: 0) }}</dd>
-                    </div>
-                </div>
-
             </div>
             <?php
                 $cartQty = $cartItems['countItem'] ?? 0;
@@ -253,7 +219,7 @@ $isExpanded = $totalCartItemProduct > 0;
                         {{ translate('hold')}}
                     </button>
                 <div class="place-order-wrapper w-100">
-                    <button id="submit_order" type="button" class="btn btn-primary btn-block m-0 fs-12-mobile p-2 min-h-40 action-form-submit" data-message="{{ translate('want_to_place_this_order').'?'}}" data-bs-toggle="modal" data-bs-target="#paymentModal">
+                    <button id="submit_order" type="button" class="btn btn-primary btn-block m-0 fs-12-mobile p-2 min-h-40 action-form-submit" data-message="{{ translate('want_to_place_this_order').'?'}}">
                         <i class="fa fa-shopping-bag"></i>
                         {{ translate('place_Order') }}
                     </button>
@@ -288,6 +254,57 @@ $isExpanded = $totalCartItemProduct > 0;
 </form>
 @include('admin-views.pos.partials.modals._clear-cart-modal')
 @include('admin-views.pos.partials.modals._hold-order-modal')
+
+@push('css_or_js')
+    <style>
+        .pos-mpesa-phone-wrap {
+            width: 100%;
+        }
+        .pos-mpesa-phone-group {
+            flex-wrap: nowrap;
+            border-radius: 0.375rem;
+            overflow: hidden;
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+        }
+        .pos-mpesa-phone-group .pos-mpesa-dial-code {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            background: #f1f5f9;
+            border: 1px solid #dee2e6;
+            border-right: 0;
+            color: #334155;
+            font-size: 0.875rem;
+            padding: 0.65rem 0.75rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .pos-mpesa-phone-group .pos-mpesa-flag {
+            font-size: 1.1rem;
+            line-height: 1;
+        }
+        .pos-mpesa-phone-group .pos-mpesa-phone-input {
+            border: 1px solid #dee2e6;
+            border-left: 0;
+            padding: 0.65rem 0.85rem;
+            font-size: 1rem;
+            letter-spacing: 0.02em;
+            min-width: 0;
+            flex: 1 1 auto;
+        }
+        .pos-mpesa-phone-group .pos-mpesa-phone-input:focus {
+            border-color: #86b7fe;
+            box-shadow: none;
+        }
+        .pos-mpesa-phone-group:focus-within {
+            box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+        }
+        .pos-mpesa-phone-group:focus-within .pos-mpesa-dial-code,
+        .pos-mpesa-phone-group:focus-within .pos-mpesa-phone-input {
+            border-color: #86b7fe;
+        }
+    </style>
+@endpush
 
 @push('script_2')
 <script>
