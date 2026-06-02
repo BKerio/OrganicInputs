@@ -68,10 +68,6 @@
         "spatie/laravel-ignition": "^2.0"
     },
     "autoload": {
-        "classmap": [
-            "database/seeders"
-
-        ],
         "files": [
             "app/Library/Constant.php",
             "app/Library/Responses.php",
@@ -135,7 +131,7 @@
         "platform": {
             "php": "8.2.0"
         },
-        "optimize-autoloader": true,
+        "optimize-autoloader": false,
         "preferred-install": "dist",
         "sort-packages": true,
         "allow-plugins": {
