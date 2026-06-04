@@ -849,4 +849,8 @@ return [
 	"If_you_turn_on_this_vendor_will_be_able_to_edit_his_orders" => "If you turn on this vendor will be able to edit his orders",
 	"If_you_turn_off_this_vendor_will_not_be_able_to_edit_his_orders" => "If you turn off this vendor will not be able to edit his orders",
 	"M-Pesa" => "M-Pesa",
+	"category_is_required" => "Category is required",
+	"sku_is_required" => "Sku is required",
+	"minimum_order_qty_is_required" => "Minimum order qty is required",
+	"Approved_Products" => "Approved Products",
 ];
