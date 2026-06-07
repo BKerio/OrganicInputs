@@ -102,6 +102,9 @@ Route::group(['middleware' => ['maintenance_mode', 'actch:admin_panel']], functi
                 Route::controller(POSOrderController::class)->group(function () {
                     Route::post(POSOrder::ORDER_DETAILS[URI] . '/{id}', 'index')->name('order-details');
                     Route::post(POSOrder::ORDER_PLACE[URI], 'placeOrder')->name('order-place');
+                    Route::post('mpesa/stk-push', 'mpesaStkPush')->name('mpesa.stk-push');
+                    Route::get('mpesa/status', 'mpesaStatus')->name('mpesa.status');
+                    Route::post('mpesa/complete-order', 'mpesaCompleteOrder')->name('mpesa.complete-order');
                     Route::any(POSOrder::CANCEL_ORDER[URI], 'cancelOrder')->name('cancel-order');
                     Route::any(POSOrder::HOLD_ORDERS[URI], 'getAllHoldOrdersView')->name('view-hold-orders');
                 });

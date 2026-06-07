@@ -102,39 +102,234 @@ $(".action-category-filter").on("change", (event) => {
     window.location.href = getUrl.toString();
 });
 
-function renderCustomerAmountForPay() {
-    let walletBalance = parseFloat($(".customer-wallet-balance").val());
-    let totalAmount = parseFloat($(".total-amount").val());
-    let insufficient = walletBalance < totalAmount;
-    let isWalletPayment = $('input[name="type"]:checked').val() === "wallet";
-    let shouldDisable = insufficient && isWalletPayment;
-    let button = $(".action-form-submit");
-    let wrapper = $(".place-order-wrapper");
-    button.attr("disabled", shouldDisable);
-    if (shouldDisable) {
-        button.removeAttr("data-toggle").removeAttr("data-target");
-    } else {
-        button.attr("data-toggle", "modal").attr("data-target", "#paymentModal");
+function getPosMpesaNationalDigits() {
+    let digits = ($("#pos_mpesa_phone").val() || "").replace(/\D/g, "");
+    if (digits.startsWith("254")) digits = digits.slice(3);
+    if (digits.startsWith("0")) digits = digits.slice(1);
+    return digits;
+}
+
+function getPosMpesaPhoneForSubmit() {
+    const national = getPosMpesaNationalDigits();
+    if (national.length >= 9) return "254" + national.slice(-9);
+    return national;
+}
+
+function validatePosMpesaPhone() {
+    const national = getPosMpesaNationalDigits();
+    if (national.length < 9 || !/^7\d{8}$/.test(national.slice(0, 9))) {
+        toastMagic.error(
+            $("#message-enter-valid-amount").data("text") ||
+                "Please enter a valid M-Pesa phone number (e.g. 712345678)"
+        );
+        return false;
     }
-    if (shouldDisable) {
-        wrapper.attr("title", "Insufficient wallet balance").attr("data-toggle", "tooltip");
-        if (!wrapper.data('bs.tooltip')) {
-            wrapper.tooltip();
-        }
+    return true;
+}
+
+function renderCustomerAmountForPay() {
+    const national = getPosMpesaNationalDigits();
+    const button = $(".action-form-submit");
+    button.prop("disabled", national.length < 9);
+    const wrapper = $(".place-order-wrapper");
+    if (national.length < 9) {
+        wrapper.attr("title", "Enter M-Pesa phone number").attr("data-toggle", "tooltip");
+        if (!wrapper.data("bs.tooltip")) wrapper.tooltip();
     } else {
-        if (wrapper.data('bs.tooltip')) {
-            wrapper.tooltip('dispose');
-        }
+        if (wrapper.data("bs.tooltip")) wrapper.tooltip("dispose");
         wrapper.removeAttr("title").removeAttr("data-toggle");
     }
 }
+
 function disableOrderPlaceButton() {
-    var selectedPaymentType = $('input[name="type"]:checked').val();
-    if (selectedPaymentType === 'wallet') {
-        $('.action-form-submit').attr('disabled', true);
-    } else {
-        $('.action-form-submit').attr('disabled', false);
+    renderCustomerAmountForPay();
+}
+
+let posMpesaPollTimer = null;
+let posMpesaHasShownResult = false;
+
+const POS_MPESA_STATUS_UI = {
+    success: { icon: "✓", color: "#198754", titleKey: "success", showRetry: false },
+    cancelled: { icon: "✕", color: "#dc3545", titleKey: "cancelled", showRetry: true },
+    wrong_pin: { icon: "✕", color: "#dc3545", titleKey: "wrongPin", showRetry: true },
+    insufficient_funds: { icon: "✕", color: "#dc3545", titleKey: "insufficientFunds", showRetry: true },
+    timeout: { icon: "✕", color: "#dc3545", titleKey: "timeout", showRetry: true },
+    expired: { icon: "✕", color: "#dc3545", titleKey: "expired", showRetry: true },
+    system_error: { icon: "✕", color: "#dc3545", titleKey: "systemError", showRetry: true },
+    failure: { icon: "✕", color: "#dc3545", titleKey: "failure", showRetry: true },
+};
+
+function getPosMpesaLabels() {
+    const el = document.getElementById("pos-mpesa-labels");
+    if (!el) return {};
+    return {
+        checkPhone: el.dataset.checkPhone || "Check your phone",
+        pending: el.dataset.pending || "M-Pesa prompt sent",
+        doNotClose: el.dataset.doNotClose || "Do not close this page",
+        success: el.dataset.success || "Payment successful",
+        completingOrder: el.dataset.completingOrder || "Completing order",
+        cancelled: el.dataset.cancelled || "Payment cancelled",
+        wrongPin: el.dataset.wrongPin || "Wrong PIN",
+        insufficientFunds: el.dataset.insufficientFunds || "Insufficient funds",
+        timeout: el.dataset.timeout || "Payment timed out",
+        expired: el.dataset.expired || "Payment expired",
+        systemError: el.dataset.systemError || "System error",
+        failure: el.dataset.failure || "Payment failed",
+        paymentFailed: el.dataset.paymentFailed || "Payment failed",
+    };
+}
+
+function isPosMpesaFinal(data) {
+    return data.is_final === true || data.is_final === 1 || data.is_final === "true";
+}
+
+function isPosMpesaSuccess(data) {
+    return data.is_success === true || data.is_success === 1 || data.status === "success";
+}
+
+function resetPosMpesaModal() {
+    posMpesaHasShownResult = false;
+    const labels = getPosMpesaLabels();
+    $("#pos-mpesa-pending-view").show();
+    $("#pos-mpesa-result-view").hide();
+    $("#pos-mpesa-spinner").show();
+    $("#pos-mpesa-retry-btn").hide();
+    $("#pos-mpesa-pending-title").text(labels.checkPhone);
+    $("#pos-mpesa-status-message").text(
+        $("#route-vendor-pos-mpesa-stk-push").data("pending-text") || labels.pending
+    );
+    $("#pos-mpesa-pending-hint").text(labels.doNotClose);
+    $("#pos-mpesa-result-icon").text("").css("color", "");
+    $("#pos-mpesa-result-title").text("");
+    $("#pos-mpesa-result-message").text("");
+}
+
+function showPosMpesaPendingModal() {
+    resetPosMpesaModal();
+    $("#posMpesaPendingModal").modal("show");
+}
+
+function showPosMpesaFinalResult(data) {
+    if (posMpesaHasShownResult) return;
+    posMpesaHasShownResult = true;
+    stopPosMpesaPolling();
+    const labels = getPosMpesaLabels();
+    const status = data.status || (isPosMpesaSuccess(data) ? "success" : "failure");
+    const ui = POS_MPESA_STATUS_UI[status] || POS_MPESA_STATUS_UI.failure;
+    $("#pos-mpesa-pending-view").hide();
+    $("#pos-mpesa-spinner").hide();
+    $("#pos-mpesa-result-view").show();
+    $("#pos-mpesa-result-icon").text(ui.icon).css("color", ui.color);
+    $("#pos-mpesa-result-title").text(labels[ui.titleKey] || labels.failure);
+    $("#pos-mpesa-result-message").text(data.message || labels[ui.titleKey] || "");
+    if (ui.showRetry) $("#pos-mpesa-retry-btn").show();
+}
+
+function stopPosMpesaPolling() {
+    if (posMpesaPollTimer) {
+        clearInterval(posMpesaPollTimer);
+        posMpesaPollTimer = null;
     }
+}
+
+function completePosOrder(checkoutRequestId) {
+    $.ajaxSetup({
+        headers: { "X-CSRF-TOKEN": $('meta[name="csrf-token"]').attr("content") },
+    });
+    $.post({
+        url: $("#route-vendor-pos-mpesa-complete-order").data("url"),
+        data: { checkout_request_id: checkoutRequestId },
+        beforeSend: function () { $("#loading").fadeIn(); },
+        success: function (response) {
+            if (Boolean(response.checkProductTypeForWalkingCustomer) === true) {
+                $("#posMpesaPendingModal").modal("hide");
+                $(".alert--message-for-pos").addClass("show").addClass("active");
+                $(".alert--message-for-pos .warning-message").empty().html(response.message);
+                $(".offcanvasAddNewCustomer").addClass("active");
+            } else if (response.status == 1) {
+                location.reload();
+            } else {
+                showPosMpesaFinalResult({
+                    status: "failure",
+                    is_final: true,
+                    is_success: false,
+                    message: response.message || getPosMpesaLabels().failure,
+                });
+            }
+        },
+        complete: function () { $("#loading").fadeOut(); },
+    });
+}
+
+function pollPosMpesaStatusOnce(checkoutRequestId, startedAt) {
+    const statusUrl = $("#route-vendor-pos-mpesa-status").data("url");
+    const labels = getPosMpesaLabels();
+    const clientTimeoutMs = 180000;
+    if (posMpesaHasShownResult) { stopPosMpesaPolling(); return; }
+    if (Date.now() - startedAt > clientTimeoutMs) {
+        showPosMpesaFinalResult({ status: "timeout", is_final: true, is_success: false, message: labels.timeout });
+        return;
+    }
+    $.ajax({
+        url: statusUrl,
+        method: "GET",
+        data: { checkout_request_id: checkoutRequestId },
+        dataType: "json",
+        headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
+        success: function (data) {
+            if (posMpesaHasShownResult) return;
+            if (isPosMpesaSuccess(data)) {
+                showPosMpesaFinalResult(data);
+                $("#pos-mpesa-result-message").text(
+                    (data.message || labels.success) + " — " + labels.completingOrder
+                );
+                completePosOrder(checkoutRequestId);
+                return;
+            }
+            if (isPosMpesaFinal(data) && !isPosMpesaSuccess(data)) {
+                showPosMpesaFinalResult(data);
+                return;
+            }
+            if (data.message) $("#pos-mpesa-status-message").text(data.message);
+        },
+    });
+}
+
+function pollPosMpesaStatus(checkoutRequestId) {
+    const startedAt = Date.now();
+    stopPosMpesaPolling();
+    pollPosMpesaStatusOnce(checkoutRequestId, startedAt);
+    posMpesaPollTimer = setInterval(function () {
+        pollPosMpesaStatusOnce(checkoutRequestId, startedAt);
+    }, 2000);
+}
+
+function startPosMpesaPayment() {
+    const formData = new FormData(document.getElementById("order-place"));
+    formData.set("mpesa_phone", getPosMpesaPhoneForSubmit());
+    $.ajaxSetup({
+        headers: { "X-CSRF-TOKEN": $('meta[name="csrf-token"]').attr("content") },
+    });
+    $.post({
+        url: $("#route-vendor-pos-mpesa-stk-push").data("url"),
+        data: formData,
+        contentType: false,
+        processData: false,
+        beforeSend: function () { $("#loading").fadeIn(); },
+        success: function (response) {
+            if (response.status == 1 && response.checkout_request_id) {
+                showPosMpesaPendingModal();
+                pollPosMpesaStatus(response.checkout_request_id);
+            } else if (Boolean(response.checkProductTypeForWalkingCustomer) === true) {
+                $(".alert--message-for-pos").addClass("show").addClass("active");
+                $(".alert--message-for-pos .warning-message").empty().html(response.message);
+                $(".offcanvasAddNewCustomer").addClass("active");
+            } else {
+                toastMagic.error(response.message || "M-Pesa STK push failed");
+            }
+        },
+        complete: function () { $("#loading").fadeOut(); },
+    });
 }
 $(".action-customer-change").on("click", function () {
     $.post({
@@ -307,69 +502,31 @@ function basicFunctionalityForCartSummary() {
         });
     });
 
-    $(".action-form-submit").on("click", function () {
-        if (checkedPaidAmount()) {
-            Swal.fire({
-                title: messageAreYouSure,
-                icon: "warning",
-                text: $(this).data("message"),
-                showCancelButton: true,
-                showConfirmButton: true,
-                confirmButtonColor: "#3085d6",
-                cancelButtonColor: "#d33",
-                cancelButtonText: getNoWord,
-                confirmButtonText: getYesWord,
-                reverseButtons: true,
-            }).then(function (result) {
-                if (result.value) {
-                    let formData = new FormData(document.getElementById('order-place'));
-                    $.ajaxSetup({
-                        headers: {
-                            "X-XSRF-TOKEN": $('meta[name="csrf-token"]').attr(
-                                "content"
-                            ),
-                        },
-                    });
-                    $.post({
-                        url: $("#order-place").attr("action"),
-                        data: formData,
-                        contentType: false,
-                        processData: false,
-                        beforeSend: function () {
-                            $("#loading").fadeIn();
-                        },
-                        success: function (response) {
-                            if (Boolean(response.checkProductTypeForWalkingCustomer) === true) {
-                                $(".alert--message-for-pos").addClass("show").addClass("active");
-                                $('.alert--message-for-pos .warning-message').empty().html(response.message);
-                                var addCustomerOffCanvas = $('.offcanvasAddNewCustomer');
-                                addCustomerOffCanvas.addClass('active');
-                                setTimeout(() => {
-                                    $('.alert--message-for-pos').removeClass('active');
-                                }, 5000)
-                            } else {
-                                location.reload();
-                            }
-                        },
-                        complete: function () {
-                            $("#loading").fadeOut();
-                        },
-                    });
-                }
-            });
-        }
+    $(document).on("input", "#pos_mpesa_phone", function () {
+        this.value = (this.value || "").replace(/\D/g, "").slice(0, 10);
+        renderCustomerAmountForPay();
     });
+
+    $(".action-form-submit").on("click", function () {
+        if (!validatePosMpesaPhone()) return;
+        Swal.fire({
+            title: messageAreYouSure,
+            icon: "warning",
+            text: $(this).data("message"),
+            showCancelButton: true,
+            showConfirmButton: true,
+            confirmButtonColor: "#3085d6",
+            cancelButtonColor: "#d33",
+            cancelButtonText: getNoWord,
+            confirmButtonText: getYesWord,
+            reverseButtons: true,
+        }).then(function (result) {
+            if (result.value) startPosMpesaPayment();
+        });
+    });
+
     function checkedPaidAmount() {
-        let paidAmount = $(".pos-paid-amount-element");
-        if ($('.paid-by-cash').prop('checked') && paidAmount.val() === '') {
-            toastMagic.error($("#message-enter-valid-amount").data("text"));
-            return false;
-        }
-        if ($('.paid-by-cash').prop('checked') && parseFloat(paidAmount.val()) < parseFloat(paidAmount.attr('min'))) {
-            toastMagic.error($("#message-less-than-total-amount").data("text"));
-            return false;
-        }
-        return true;
+        return validatePosMpesaPhone();
     }
 
     $('.option-buttons input').on('change', function () {
@@ -393,7 +550,7 @@ function basicFunctionalityForCartSummary() {
         }
     });
 
-    $('.option-buttons input').trigger('change');
+    renderCustomerAmountForPay();
 
     $('.pos-paid-amount-element').on("keypress", function (event) {
         let charCode = event.which || event.keyCode;

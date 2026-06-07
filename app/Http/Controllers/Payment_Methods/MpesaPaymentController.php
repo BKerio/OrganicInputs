@@ -194,13 +194,13 @@ class MpesaPaymentController extends Controller
                     callbackPayload: $callback,
                 );
             }
-        } elseif (AdminPosMpesaService::applyStkCallback(
+        } elseif (AdminPosMpesaService::applyStkCallbackAnyPanel(
             checkoutRequestId: $checkoutRequestId,
             resultCode: $resultCode,
             resultDesc: $resultDesc,
             callbackPayload: $callback,
         )) {
-            // Admin POS STK session updated in cache for polling UI.
+            // POS STK session updated in cache for polling UI.
         } else {
             Log::warning('M-Pesa callback: payment not found', ['checkout_request_id' => $checkoutRequestId]);
         }

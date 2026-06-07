@@ -7,19 +7,44 @@ use Illuminate\Support\Facades\Log;
 
 class AdminPosMpesaService
 {
-    public static function cacheKey(string $checkoutRequestId): string
+    public const PANEL_ADMIN = 'admin';
+    public const PANEL_VENDOR = 'vendor';
+
+    public static function cacheKey(string $checkoutRequestId, string $panel = self::PANEL_ADMIN): string
     {
-        return 'admin_pos_mpesa_' . $checkoutRequestId;
+        return $panel . '_pos_mpesa_' . $checkoutRequestId;
     }
 
-    public static function getPending(string $checkoutRequestId): ?array
+    public static function getPending(string $checkoutRequestId, string $panel = self::PANEL_ADMIN): ?array
     {
-        return Cache::get(self::cacheKey($checkoutRequestId));
+        return Cache::get(self::cacheKey($checkoutRequestId, $panel));
     }
 
-    public static function putPending(string $checkoutRequestId, array $data): void
+    public static function putPending(string $checkoutRequestId, array $data, string $panel = self::PANEL_ADMIN): void
     {
-        Cache::put(self::cacheKey($checkoutRequestId), $data, now()->addMinutes(30));
+        $data['panel'] = $panel;
+        Cache::put(self::cacheKey($checkoutRequestId, $panel), $data, now()->addMinutes(30));
+    }
+
+    public static function applyStkCallbackAnyPanel(
+        string $checkoutRequestId,
+        int $resultCode,
+        ?string $resultDesc = null,
+        array $callbackPayload = [],
+    ): bool {
+        foreach ([self::PANEL_ADMIN, self::PANEL_VENDOR] as $panel) {
+            if (self::getPending($checkoutRequestId, $panel)) {
+                return self::applyStkCallback(
+                    checkoutRequestId: $checkoutRequestId,
+                    resultCode: $resultCode,
+                    resultDesc: $resultDesc,
+                    callbackPayload: $callbackPayload,
+                    panel: $panel,
+                );
+            }
+        }
+
+        return false;
     }
 
     public static function applyStkCallback(
@@ -27,8 +52,9 @@ class AdminPosMpesaService
         int $resultCode,
         ?string $resultDesc = null,
         array $callbackPayload = [],
+        string $panel = self::PANEL_ADMIN,
     ): bool {
-        $pending = self::getPending($checkoutRequestId);
+        $pending = self::getPending($checkoutRequestId, $panel);
         if (!$pending) {
             return false;
         }
@@ -50,9 +76,10 @@ class AdminPosMpesaService
             $pending['mpesa_receipt'] = self::extractReceiptNumber($callbackPayload);
         }
 
-        self::putPending($checkoutRequestId, $pending);
+        self::putPending($checkoutRequestId, $pending, $panel);
 
-        Log::info('Admin POS M-Pesa STK callback applied', [
+        Log::info('POS M-Pesa STK callback applied', [
+            'panel' => $panel,
             'checkout_request_id' => $checkoutRequestId,
             'status' => $resultPayload['status'],
             'result_code' => $resultCode,
